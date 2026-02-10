@@ -166,15 +166,50 @@
         let isTracking = false;
         let accelerometer = null;
         let geolocationId = null;
-        let detectedBumps = JSON.parse(localStorage.getItem('roadBumps') || '[]');
+        let detectedBumps = [];
         let currentPosition = null;
         let pathCoordinates = [];
+        let lastPosition = null; // Per calcolo velocità
+        let currentSpeed = 0; // km/h stimati
+        
+        // Caricamento sicuro da localStorage - con pulizia automatica dati corrotti
+        try {
+            const stored = localStorage.getItem('roadBumps');
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                if (Array.isArray(parsed)) {
+                    // Filtra SOLO entry valide con tutti i campi necessari
+                    detectedBumps = parsed.filter(b => {
+                        return b && typeof b === 'object' && 
+                               b.id && typeof b.lat === 'number' && !isNaN(b.lat) && 
+                               typeof b.lng === 'number' && !isNaN(b.lng);
+                    });
+                    // Se abbiamo filtrato qualcosa, salviamo la lista pulita
+                    if (detectedBumps.length !== parsed.length) {
+                        localStorage.setItem('roadBumps', JSON.stringify(detectedBumps));
+                        console.warn('Dati corrotti rimossi dal localStorage');
+                    }
+                } else {
+                    detectedBumps = [];
+                    localStorage.removeItem('roadBumps');
+                }
+            }
+        } catch (e) {
+            console.error('Errore caricamento dati:', e);
+            detectedBumps = [];
+            localStorage.removeItem('roadBumps'); // Pulizia forzata se JSON invalido
+        }
         
         // Costanti
         const BUMP_THRESHOLD = 15; // m/s² (circa 1.5g di accelerazione improvvisa)
         const COOLDOWN_MS = 2000; // 2 secondi tra un rilevamento e l'altro
         let lastBumpTime = 0;
         let proximityCheckInterval;
+        
+        // Avviso a 350m di default, ma si adatta alla velocità (min 150m, max 500m)
+        const BASE_WARNING_DISTANCE = 350; // metri
+        const MIN_WARNING_DISTANCE = 150;
+        const MAX_WARNING_DISTANCE = 500;
 
         // Inizializzazione
         document.addEventListener('DOMContentLoaded', () => {
@@ -251,12 +286,28 @@
 
             geolocationId = navigator.geolocation.watchPosition(
                 (position) => {
-                    currentPosition = {
+                    const newPosition = {
                         lat: position.coords.latitude,
                         lng: position.coords.longitude,
                         accuracy: position.coords.accuracy,
-                        timestamp: Date.now()
+                        timestamp: Date.now(),
+                        speed: position.coords.speed // m/s se disponibile dal GPS
                     };
+                    
+                    // Calcola velocità se il GPS non la fornisce
+                    if (lastPosition && !newPosition.speed) {
+                        const dist = calculateDistance(lastPosition.lat, lastPosition.lng, newPosition.lat, newPosition.lng);
+                        const timeDiff = (newPosition.timestamp - lastPosition.timestamp) / 1000; // secondi
+                        if (timeDiff > 0) {
+                            const speedMs = dist / timeDiff;
+                            currentSpeed = speedMs * 3.6; // conversione in km/h
+                        }
+                    } else if (newPosition.speed) {
+                        currentSpeed = newPosition.speed * 3.6; // conversione m/s in km/h
+                    }
+                    
+                    currentPosition = newPosition;
+                    lastPosition = newPosition;
                     
                     updateUserPosition(currentPosition);
                     pathCoordinates.push([currentPosition.lat, currentPosition.lng]);
@@ -371,12 +422,7 @@
             // Aggiorna lista
             renderBumpsList();
             
-            // Feedback tattile/vibrazione se disponibile
-            if (navigator.vibrate) {
-                navigator.vibrate([100, 50, 100]);
-            }
-            
-            // Animazione UI
+            // Solo feedback visivo (no vibrazione durante registrazione per non disturbare)
             const list = document.getElementById('bumps-list');
             list.classList.add('bump-alert');
             setTimeout(() => list.classList.remove('bump-alert'), 500);
@@ -393,11 +439,16 @@
             
             const marker = L.marker([bump.lat, bump.lng], { icon }).addTo(map);
             
+            // Difensivo: garantisci valori validi per il popup
+            const safeType = bump.type === 'buca_profonda' ? 'Buca Profonda' : 'Dosso/Dissesto';
+            const safeIntensity = parseFloat(bump.intensity) || 0;
+            const safeDate = bump.timestamp ? new Date(bump.timestamp).toLocaleString() : 'Data non disponibile';
+            
             const popupContent = `
                 <div class="text-sm">
-                    <strong>${bump.type === 'buca_profonda' ? 'Buca Profonda' : 'Dosso/Dissesto'}</strong><br>
-                    Intensità: ${(bump.intensity/9.8).toFixed(1)}g<br>
-                    <small>${new Date(bump.timestamp).toLocaleString()}</small>
+                    <strong>${safeType}</strong><br>
+                    Intensità: ${(safeIntensity/9.8).toFixed(1)}g<br>
+                    <small>${safeDate}</small>
                 </div>
             `;
             
@@ -407,25 +458,39 @@
         function checkProximity() {
             if (!currentPosition || detectedBumps.length === 0) return;
             
-            const WARNING_DISTANCE = 200; // metri
+            // Adatta distanza avviso in base alla velocità:
+            // A 20 km/h -> 150m (circa 25-30 secondi)
+            // A 50 km/h -> 350m (circa 25 secondi)  
+            // A 90 km/h -> 500m (circa 20 secondi)
+            let warningDistance = BASE_WARNING_DISTANCE;
+            if (currentSpeed > 0) {
+                // Calcola distanza per dare circa 20-25 secondi di preavviso
+                const timeToReact = 22; // secondi
+                const speedMs = currentSpeed / 3.6;
+                warningDistance = Math.max(MIN_WARNING_DISTANCE, 
+                                 Math.min(MAX_WARNING_DISTANCE, speedMs * timeToReact));
+            }
             
             let nearestBump = null;
             let minDistance = Infinity;
             
             detectedBumps.forEach(bump => {
+                if (!bump || !bump.lat || !bump.lng) return; // Salta entry corrotte
+                
                 const dist = calculateDistance(
                     currentPosition.lat, currentPosition.lng,
                     bump.lat, bump.lng
                 );
                 
-                if (dist < minDistance && dist < WARNING_DISTANCE) {
+                if (dist < minDistance && dist < warningDistance) {
                     minDistance = dist;
                     nearestBump = bump;
                 }
             });
             
             if (nearestBump) {
-                showAlert(nearestBump, minDistance);
+                const timeToArrival = currentSpeed > 0 ? Math.round((minDistance / (currentSpeed / 3.6))) : 0;
+                showAlert(nearestBump, minDistance, timeToArrival);
             } else {
                 hideAlert();
             }
@@ -446,19 +511,47 @@
             return R * c;
         }
 
-        function showAlert(bump, distance) {
+        function showAlert(bump, distance, secondsToArrival = 0) {
             const banner = document.getElementById('alert-banner');
             const text = banner.querySelector('p.font-bold');
+            const subtext = banner.querySelector('p.text-sm');
             
-            text.textContent = `ATTENZIONE! ${bump.type === 'buca_profonda' ? 'Buca' : 'Dosso'} tra ${Math.round(distance)}m`;
+            // Difensivo: se bump non ha type, defaulta a 'dosso'
+            const tipo = (bump && bump.type === 'buca_profonda') ? 'Buca profonda' : 'Dosso stradale';
+            const dist = Math.round(parseFloat(distance) || 0);
+            let distanceText = `tra ${dist}m`;
+            
+            // Aggiungi tempo stimato se abbiamo la velocità
+            const secs = parseInt(secondsToArrival) || 0;
+            if (secs > 0 && secs < 60) {
+                distanceText += ` (${secs}s)`;
+            } else if (secs >= 60) {
+                distanceText += ` (${Math.round(secs/60)}min)`;
+            }
+            
+            // Imposta testo in modo sicuro, mai undefined
+            const finalText = `⚠️ ${tipo || 'Dissesto'} ${distanceText}`;
+            text.textContent = finalText;
+            
+            // Difensivo per currentSpeed
+            const speed = parseFloat(currentSpeed) || 0;
+            const speedText = speed > 5 
+                ? `Rallenta! Stai andando a ${Math.round(speed)} km/h` 
+                : 'Rallentare nelle prossimità';
+            subtext.textContent = speedText;
             
             if (banner.classList.contains('hidden')) {
                 banner.classList.remove('hidden');
                 banner.classList.remove('translate-y-full');
                 
-                // Vibrazione allarme
+                // Vibrazione allarme solo per avviso prossimità (non registrazione)
                 if (navigator.vibrate) {
                     navigator.vibrate([200, 100, 200, 100, 400]);
+                }
+                
+                // Ripeti vibrazione se molto vicino (ultimo avviso urgente)
+                if (distance < 80 && navigator.vibrate) {
+                    setTimeout(() => navigator.vibrate([100, 50, 100, 50, 300]), 1000);
                 }
             }
         }
@@ -501,7 +594,10 @@
         function renderBumpsList() {
             const container = document.getElementById('bumps-list');
             
-            if (detectedBumps.length === 0) {
+            // Protezione aggiuntiva: se container non esiste, esci
+            if (!container) return;
+            
+            if (!detectedBumps || detectedBumps.length === 0) {
                 container.innerHTML = `
                     <div class="text-center text-gray-400 py-8">
                         <i data-lucide="map-pin" class="w-12 h-12 mx-auto mb-2 opacity-20"></i>
@@ -513,33 +609,55 @@
                 return;
             }
             
-            // Ordina per data decrescente
-            const sorted = [...detectedBumps].sort((a, b) => b.id - a.id);
+            // Ordina per data decrescente e filtra eventuali entry danneggiate
+            const sorted = [...detectedBumps]
+                .filter(b => b && b.id && b.lat && b.lng) // rimuovi entry invalide
+                .sort((a, b) => (b.id || 0) - (a.id || 0));
             
-            container.innerHTML = sorted.map(bump => `
+            container.innerHTML = sorted.map(bump => {
+                // Difensivo: se mancano dati, usa default
+                const intensity = parseFloat(bump.intensity) || 0;
+                const type = bump.type || 'dosso';
+                const isSevere = intensity > 25;
+                const gForce = (intensity / 9.8).toFixed(1);
+                const dateStr = bump.timestamp ? new Date(bump.timestamp).toLocaleString() : 'Data sconosciuta';
+                
+                // Assicurati che lat/lng siano numeri validi per l'onclick
+                const safeLat = parseFloat(bump.lat);
+                const safeLng = parseFloat(bump.lng);
+                
+                return `
                 <div class="bg-white rounded-xl p-3 shadow-sm border border-gray-200 flex items-center gap-3">
-                    <div class="w-10 h-10 rounded-full ${bump.intensity > 25 ? 'bg-red-100 text-red-600' : 'bg-orange-100 text-orange-600'} flex items-center justify-center shrink-0">
-                        <i data-lucide="${bump.intensity > 25 ? 'alert-triangle' : 'alert-circle'}" class="w-5 h-5"></i>
+                    <div class="w-10 h-10 rounded-full ${isSevere ? 'bg-red-100 text-red-600' : 'bg-orange-100 text-orange-600'} flex items-center justify-center shrink-0">
+                        <i data-lucide="${isSevere ? 'alert-triangle' : 'alert-circle'}" class="w-5 h-5"></i>
                     </div>
                     <div class="flex-1 min-w-0">
                         <p class="font-semibold text-gray-800 text-sm truncate">
-                            ${bump.type === 'buca_profonda' ? 'Buca Profonda' : 'Dosso Stradale'}
+                            ${type === 'buca_profonda' ? 'Buca Profonda' : 'Dosso Stradale'}
                         </p>
                         <p class="text-xs text-gray-500">
-                            ${new Date(bump.timestamp).toLocaleString()} • ${(bump.intensity/9.8).toFixed(1)}g
+                            ${dateStr} • ${gForce}g
                         </p>
                     </div>
-                    <button onclick="centerOnBump(${bump.lat}, ${bump.lng})" class="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-blue-500">
+                    <button onclick="centerOnBump(${safeLat}, ${safeLng})" class="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-blue-500">
                         <i data-lucide="map-pin" class="w-4 h-4"></i>
                     </button>
                 </div>
-            `).join('');
+            `}).join('');
             
             lucide.createIcons();
         }
 
         function centerOnBump(lat, lng) {
-            map.setView([lat, lng], 18);
+            // Controllo difensivo: verifica che siano numeri validi
+            const safeLat = parseFloat(lat);
+            const safeLng = parseFloat(lng);
+            if (isNaN(safeLat) || isNaN(safeLng)) {
+                console.error('Coordinate invalide:', lat, lng);
+                alert('Errore: coordinate del dissesto non valide');
+                return;
+            }
+            map.setView([safeLat, safeLng], 18);
         }
 
         function exportData() {
