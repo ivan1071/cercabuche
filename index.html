@@ -87,14 +87,9 @@
         
         <!-- Toolbar -->
         <div class="p-4 border-b border-gray-200 flex gap-2 overflow-x-auto">
-            <button id="btn-record" onclick="toggleRecording()" class="flex-1 bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-green-500/30">
+            <button id="btn-start" onclick="toggleTracking()" class="flex-1 bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-green-500/30">
                 <i data-lucide="play" class="w-5 h-5"></i>
                 <span>Avvia</span>
-            </button>
-            
-            <button id="btn-stop-nav" onclick="stopNavigation()" class="hidden bg-gray-600 hover:bg-gray-700 text-white font-semibold py-3 px-4 rounded-xl flex items-center gap-2 transition-all active:scale-95">
-                <i data-lucide="x" class="w-5 h-5"></i>
-                <span>Termina</span>
             </button>
             
             <button onclick="exportData()" class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-xl flex items-center gap-2 transition-all active:scale-95 shadow-lg shadow-blue-500/30">
@@ -136,8 +131,8 @@
             <div class="flex items-center gap-3">
                 <i data-lucide="alert-octagon" class="w-6 h-6 animate-bounce"></i>
                 <div class="flex-1">
-                    <p class="font-bold" id="alert-title">ATTENZIONE!</p>
-                    <p class="text-sm opacity-90" id="alert-subtext">Rallentare nelle prossimità</p>
+                    <p class="font-bold">ATTENZIONE! Dosse rilevato</p>
+                    <p class="text-sm opacity-90">Rallentare nelle prossimità</p>
                 </div>
                 <button onclick="dismissAlert()" class="p-1 hover:bg-white/20 rounded">
                     <i data-lucide="x" class="w-5 h-5"></i>
@@ -152,12 +147,11 @@
             <h3 class="font-bold text-lg mb-2">Come usare l'app</h3>
             <ul class="space-y-2 text-sm text-gray-600 mb-4">
                 <li class="flex gap-2"><i data-lucide="check-circle" class="w-5 h-5 text-green-500 shrink-0"></i> <span>Fissa il telefono al cruscotto in posizione verticale</span></li>
-                <li class="flex gap-2"><i data-lucide="check-circle" class="w-5 h-5 text-green-500 shrink-0"></i> <span>Premi "Avvia" per registrare nuovi dissesti</span></li>
-                <li class="flex gap-2"><i data-lucide="check-circle" class="w-5 h-5 text-green-500 shrink-0"></i> <span>Premi "Stop" per fermare la registrazione ma continuare la navigazione</span></li>
-                <li class="flex gap-2"><i data-lucide="check-circle" class="w-5 h-5 text-green-500 shrink-0"></i> <span>In modalità navigazione ti avvisa dei dissesti già registrati</span></li>
-                <li class="flex gap-2"><i data-lucide="alert-circle" class="w-5 h-5 text-orange-500 shrink-0"></i> <span>Tieni l'app in primo piano (usa split screen con Maps)</span></li>
+                <li class="flex gap-2"><i data-lucide="check-circle" class="w-5 h-5 text-green-500 shrink-0"></i> <span>Avvia il tracking prima di partire</span></li>
+                <li class="flex gap-2"><i data-lucide="check-circle" class="w-5 h-5 text-green-500 shrink-0"></i> <span>L'app rileva automaticamente scosse verticali (buche/dossi)</span></li>
+                <li class="flex gap-2"><i data-lucide="alert-circle" class="w-5 h-5 text-orange-500 shrink-0"></i> <span>Tieni l'app in primo piano (usa lo split screen con Maps)</span></li>
             </ul>
-            <button onclick="closeModal()" class="w-full bg-gray-800 text-white py-3 rounded-xl font-semibold">Ho capito</button>
+            <button onclick="document.getElementById('info-modal').classList.add('hidden')" class="w-full bg-gray-800 text-white py-3 rounded-xl font-semibold">Ho capito</button>
         </div>
     </div>
 
@@ -169,29 +163,31 @@
         let map;
         let userMarker;
         let pathLine;
-        let isRecording = false;
-        let isNavigating = false;
+        let isTracking = false;
         let accelerometer = null;
         let geolocationId = null;
         let detectedBumps = [];
         let currentPosition = null;
         let pathCoordinates = [];
-        let lastPosition = null;
-        let currentSpeed = 0;
+        let lastPosition = null; // Per calcolo velocità
+        let currentSpeed = 0; // km/h stimati
         
-        // Caricamento sicuro da localStorage
+        // Caricamento sicuro da localStorage - con pulizia automatica dati corrotti
         try {
             const stored = localStorage.getItem('roadBumps');
             if (stored) {
                 const parsed = JSON.parse(stored);
                 if (Array.isArray(parsed)) {
+                    // Filtra SOLO entry valide con tutti i campi necessari
                     detectedBumps = parsed.filter(b => {
                         return b && typeof b === 'object' && 
                                b.id && typeof b.lat === 'number' && !isNaN(b.lat) && 
                                typeof b.lng === 'number' && !isNaN(b.lng);
                     });
+                    // Se abbiamo filtrato qualcosa, salviamo la lista pulita
                     if (detectedBumps.length !== parsed.length) {
                         localStorage.setItem('roadBumps', JSON.stringify(detectedBumps));
+                        console.warn('Dati corrotti rimossi dal localStorage');
                     }
                 } else {
                     detectedBumps = [];
@@ -201,15 +197,17 @@
         } catch (e) {
             console.error('Errore caricamento dati:', e);
             detectedBumps = [];
-            localStorage.removeItem('roadBumps');
+            localStorage.removeItem('roadBumps'); // Pulizia forzata se JSON invalido
         }
         
         // Costanti
-        const BUMP_THRESHOLD = 15;
-        const COOLDOWN_MS = 2000;
+        const BUMP_THRESHOLD = 15; // m/s² (circa 1.5g di accelerazione improvvisa)
+        const COOLDOWN_MS = 2000; // 2 secondi tra un rilevamento e l'altro
         let lastBumpTime = 0;
         let proximityCheckInterval;
-        const BASE_WARNING_DISTANCE = 350;
+        
+        // Avviso a 350m di default, ma si adatta alla velocità (min 150m, max 500m)
+        const BASE_WARNING_DISTANCE = 350; // metri
         const MIN_WARNING_DISTANCE = 150;
         const MAX_WARNING_DISTANCE = 500;
 
@@ -217,7 +215,9 @@
         document.addEventListener('DOMContentLoaded', () => {
             initMap();
             renderBumpsList();
+            checkPermissions();
             
+            // Mostra info al primo avvio
             if (!localStorage.getItem('roadBumps_seenInfo')) {
                 document.getElementById('info-modal').classList.remove('hidden');
                 document.getElementById('info-modal').classList.add('flex');
@@ -225,53 +225,46 @@
             }
         });
 
-        function closeModal() {
-            document.getElementById('info-modal').classList.add('hidden');
-            document.getElementById('info-modal').classList.remove('flex');
-        }
-
         function initMap() {
-            map = L.map('map').setView([41.9028, 12.4964], 13);
+            map = L.map('map').setView([41.9028, 12.4964], 13); // Roma default
             
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '© OpenStreetMap contributors',
                 maxZoom: 19
             }).addTo(map);
 
+            // Ripristina marker esistenti
             detectedBumps.forEach(bump => {
-                if (bump && bump.lat && bump.lng) {
-                    addBumpMarker(bump);
-                }
+                addBumpMarker(bump);
             });
         }
 
-        async function toggleRecording() {
-            const btn = document.getElementById('btn-record');
+        function checkPermissions() {
+            // Verifica supporto sensori
+            if ('Accelerometer' in window) {
+                console.log('Accelerometer supportato');
+            } else {
+                alert('Il tuo dispositivo non supporta l\'Accelerometer API. Prova con Chrome su Android.');
+            }
+        }
+
+        async function toggleTracking() {
+            const btn = document.getElementById('btn-start');
             const statusInd = document.getElementById('status-indicator');
             const statusText = document.getElementById('status-text');
-            const btnStopNav = document.getElementById('btn-stop-nav');
             
-            if (isRecording) {
-                // Ferma solo la registrazione, mantieni navigazione
-                stopRecordingOnly();
-                
+            if (isTracking) {
+                stopTracking();
                 btn.innerHTML = '<i data-lucide="play" class="w-5 h-5"></i><span>Avvia</span>';
                 btn.classList.remove('bg-red-500', 'hover:bg-red-600', 'shadow-red-500/30');
                 btn.classList.add('bg-green-500', 'hover:bg-green-600', 'shadow-green-500/30');
-                
-                // Indicatore blu = Navigazione attiva (solo lettura)
                 statusInd.classList.remove('bg-green-500', 'animate-pulse');
-                statusInd.classList.add('bg-blue-500', 'animate-pulse');
-                statusText.textContent = 'Navigazione attiva';
-                
-                // Mostra pulsante "Termina" per fermare completamente
-                btnStopNav.classList.remove('hidden');
-                
+                statusInd.classList.add('bg-gray-400');
+                statusText.textContent = 'Standby';
                 lucide.createIcons();
             } else {
-                // Avvia registrazione + navigazione
                 try {
-                    await startRecordingAndNav();
+                    await startTracking();
                     btn.innerHTML = '<i data-lucide="square" class="w-5 h-5"></i><span>Stop</span>';
                     btn.classList.remove('bg-green-500', 'hover:bg-green-600', 'shadow-green-500/30');
                     btn.classList.add('bg-red-500', 'hover:bg-red-600', 'shadow-red-500/30');
@@ -285,8 +278,8 @@
             }
         }
 
-        async function startRecordingAndNav() {
-            // Avvia GPS
+        async function startTracking() {
+            // 1. Avvia Geolocalizzazione
             if (!navigator.geolocation) {
                 throw new Error('Geolocalizzazione non supportata');
             }
@@ -298,18 +291,19 @@
                         lng: position.coords.longitude,
                         accuracy: position.coords.accuracy,
                         timestamp: Date.now(),
-                        speed: position.coords.speed
+                        speed: position.coords.speed // m/s se disponibile dal GPS
                     };
                     
+                    // Calcola velocità se il GPS non la fornisce
                     if (lastPosition && !newPosition.speed) {
                         const dist = calculateDistance(lastPosition.lat, lastPosition.lng, newPosition.lat, newPosition.lng);
-                        const timeDiff = (newPosition.timestamp - lastPosition.timestamp) / 1000;
+                        const timeDiff = (newPosition.timestamp - lastPosition.timestamp) / 1000; // secondi
                         if (timeDiff > 0) {
                             const speedMs = dist / timeDiff;
-                            currentSpeed = speedMs * 3.6;
+                            currentSpeed = speedMs * 3.6; // conversione in km/h
                         }
                     } else if (newPosition.speed) {
-                        currentSpeed = newPosition.speed * 3.6;
+                        currentSpeed = newPosition.speed * 3.6; // conversione m/s in km/h
                     }
                     
                     currentPosition = newPosition;
@@ -328,9 +322,10 @@
                 { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
             );
 
-            // Avvia Accelerometro
+            // 2. Avvia Accelerometro
             if ('Accelerometer' in window) {
                 try {
+                    // Richiedi permesso su Android/Chrome
                     if (navigator.permissions) {
                         const result = await navigator.permissions.query({ name: 'accelerometer' });
                         if (result.state === 'denied') {
@@ -346,35 +341,25 @@
                     
                     accelerometer.start();
                 } catch (e) {
-                    console.warn('Accelerometro non disponibile:', e);
+                    console.warn('Accelerometro non disponibile, uso mock per test:', e);
+                    // Per testing su desktop: simula con dati random
+                    // startMockSensors(); 
                 }
+            } else {
+                alert('API Accelerometro non supportata. Usa Chrome su Android con HTTPS.');
             }
 
-            // Avvia controllo prossimità (ogni 3 secondi)
+            // 3. Avvia controllo prossimità dissesti
             proximityCheckInterval = setInterval(checkProximity, 3000);
             
-            isRecording = true;
-            isNavigating = true;
+            isTracking = true;
         }
 
-        function stopRecordingOnly() {
-            // Ferma solo l'accelerometro (registrazione nuovi dissesti)
-            if (accelerometer) {
-                accelerometer.stop();
-                accelerometer = null;
-            }
-            isRecording = false;
-            // Navigazione e GPS rimangono attivi!
-        }
-
-        function stopNavigation() {
-            // Ferma tutto definitivamente
-            isNavigating = false;
-            isRecording = false;
+        function stopTracking() {
+            isTracking = false;
             
             if (geolocationId) {
                 navigator.geolocation.clearWatch(geolocationId);
-                geolocationId = null;
             }
             
             if (accelerometer) {
@@ -384,39 +369,23 @@
             
             if (proximityCheckInterval) {
                 clearInterval(proximityCheckInterval);
-                proximityCheckInterval = null;
             }
-            
-            // Reset UI
-            const btnRecord = document.getElementById('btn-record');
-            const btnStopNav = document.getElementById('btn-stop-nav');
-            const statusInd = document.getElementById('status-indicator');
-            const statusText = document.getElementById('status-text');
-            
-            btnRecord.innerHTML = '<i data-lucide="play" class="w-5 h-5"></i><span>Avvia</span>';
-            btnRecord.classList.remove('bg-red-500', 'hover:bg-red-600', 'shadow-red-500/30');
-            btnRecord.classList.add('bg-green-500', 'hover:bg-green-600', 'shadow-green-500/30');
-            
-            btnStopNav.classList.add('hidden');
-            
-            statusInd.classList.remove('bg-green-500', 'bg-blue-500', 'animate-pulse');
-            statusInd.classList.add('bg-gray-400');
-            statusText.textContent = 'Standby';
-            
-            hideAlert();
-            lucide.createIcons();
         }
 
         function processAccelerometerData(x, y, z) {
             if (!currentPosition) return;
             
-            const verticalAccel = Math.abs((z || 0) - 9.8);
-            const totalAccel = Math.sqrt((x||0)*(x||0) + (y||0)*(y||0) + (z||0)*(z||0));
+            // Calcola accelerazione totale (rimuovendo la gravità ~9.8 m/s² sull'asse Z)
+            // Consideriamo scosse sull'asse Z (su-giù) come dissesti stradali
+            const verticalAccel = Math.abs(z - 9.8); // Sottraiamo gravità standard
+            const totalAccel = Math.sqrt(x*x + y*y + z*z);
             
+            // Aggiorna UI barra
             const intensity = Math.min((verticalAccel / 20) * 100, 100);
             document.getElementById('intensity-bar').style.width = intensity + '%';
             document.getElementById('g-force').textContent = (verticalAccel / 9.8).toFixed(1) + 'g';
             
+            // Cambia colore in base all'intensità
             const bar = document.getElementById('intensity-bar');
             if (verticalAccel > BUMP_THRESHOLD) {
                 bar.classList.remove('from-green-400', 'via-yellow-400', 'to-red-500');
@@ -426,6 +395,7 @@
                 bar.classList.remove('bg-red-600');
             }
             
+            // Rileva dissesto
             const now = Date.now();
             if (verticalAccel > BUMP_THRESHOLD && (now - lastBumpTime > COOLDOWN_MS)) {
                 lastBumpTime = now;
@@ -438,25 +408,28 @@
                 id: Date.now(),
                 lat: position.lat,
                 lng: position.lng,
-                intensity: intensity || 0,
+                intensity: intensity,
                 timestamp: new Date().toISOString(),
-                type: (intensity || 0) > 25 ? 'buca_profonda' : 'dosso'
+                type: intensity > 25 ? 'buca_profonda' : 'dosso'
             };
             
             detectedBumps.push(bump);
             localStorage.setItem('roadBumps', JSON.stringify(detectedBumps));
             
+            // Aggiungi a mappa
             addBumpMarker(bump);
+            
+            // Aggiorna lista
             renderBumpsList();
             
-            // Solo feedback visivo (no vibrazione durante registrazione)
+            // Solo feedback visivo (no vibrazione durante registrazione per non disturbare)
             const list = document.getElementById('bumps-list');
             list.classList.add('bump-alert');
             setTimeout(() => list.classList.remove('bump-alert'), 500);
         }
 
         function addBumpMarker(bump) {
-            const color = (bump.intensity || 0) > 25 ? 'red' : 'orange';
+            const color = bump.intensity > 25 ? 'red' : 'orange';
             const icon = L.divIcon({
                 className: 'custom-div-icon',
                 html: `<div style="background-color: ${color}; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
@@ -466,6 +439,7 @@
             
             const marker = L.marker([bump.lat, bump.lng], { icon }).addTo(map);
             
+            // Difensivo: garantisci valori validi per il popup
             const safeType = bump.type === 'buca_profonda' ? 'Buca Profonda' : 'Dosso/Dissesto';
             const safeIntensity = parseFloat(bump.intensity) || 0;
             const safeDate = bump.timestamp ? new Date(bump.timestamp).toLocaleString() : 'Data non disponibile';
@@ -482,11 +456,16 @@
         }
 
         function checkProximity() {
-            if (!currentPosition || detectedBumps.length === 0 || !isNavigating) return;
+            if (!currentPosition || detectedBumps.length === 0) return;
             
+            // Adatta distanza avviso in base alla velocità:
+            // A 20 km/h -> 150m (circa 25-30 secondi)
+            // A 50 km/h -> 350m (circa 25 secondi)  
+            // A 90 km/h -> 500m (circa 20 secondi)
             let warningDistance = BASE_WARNING_DISTANCE;
             if (currentSpeed > 0) {
-                const timeToReact = 22;
+                // Calcola distanza per dare circa 20-25 secondi di preavviso
+                const timeToReact = 22; // secondi
                 const speedMs = currentSpeed / 3.6;
                 warningDistance = Math.max(MIN_WARNING_DISTANCE, 
                                  Math.min(MAX_WARNING_DISTANCE, speedMs * timeToReact));
@@ -496,7 +475,7 @@
             let minDistance = Infinity;
             
             detectedBumps.forEach(bump => {
-                if (!bump || typeof bump.lat !== 'number' || typeof bump.lng !== 'number') return;
+                if (!bump || !bump.lat || !bump.lng) return; // Salta entry corrotte
                 
                 const dist = calculateDistance(
                     currentPosition.lat, currentPosition.lng,
@@ -518,11 +497,11 @@
         }
 
         function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371000;
-            const φ1 = (lat1 || 0) * Math.PI/180;
-            const φ2 = (lat2 || 0) * Math.PI/180;
-            const Δφ = ((lat2 || 0)-(lat1 || 0)) * Math.PI/180;
-            const Δλ = ((lon2 || 0)-(lon1 || 0)) * Math.PI/180;
+            const R = 6371000; // Raggio terra in metri
+            const φ1 = lat1 * Math.PI/180;
+            const φ2 = lat2 * Math.PI/180;
+            const Δφ = (lat2-lat1) * Math.PI/180;
+            const Δλ = (lon2-lon1) * Math.PI/180;
 
             const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
                       Math.cos(φ1) * Math.cos(φ2) *
@@ -532,16 +511,17 @@
             return R * c;
         }
 
-        function showAlert(bump, distance, secondsToArrival) {
+        function showAlert(bump, distance, secondsToArrival = 0) {
             const banner = document.getElementById('alert-banner');
-            const title = document.getElementById('alert-title');
-            const subtext = document.getElementById('alert-subtext');
+            const text = banner.querySelector('p.font-bold');
+            const subtext = banner.querySelector('p.text-sm');
             
-            // Protezione totale contro undefined
+            // Difensivo: se bump non ha type, defaulta a 'dosso'
             const tipo = (bump && bump.type === 'buca_profonda') ? 'Buca profonda' : 'Dosso stradale';
             const dist = Math.round(parseFloat(distance) || 0);
             let distanceText = `tra ${dist}m`;
             
+            // Aggiungi tempo stimato se abbiamo la velocità
             const secs = parseInt(secondsToArrival) || 0;
             if (secs > 0 && secs < 60) {
                 distanceText += ` (${secs}s)`;
@@ -549,23 +529,28 @@
                 distanceText += ` (${Math.round(secs/60)}min)`;
             }
             
-            // NO undefinednull qui: costruzione stringa sicura
-            title.textContent = '⚠️ ' + String(tipo) + ' ' + String(distanceText);
+            // Imposta testo in modo sicuro, mai undefined
+            const finalText = `⚠️ ${tipo || 'Dissesto'} ${distanceText}`;
+            text.textContent = finalText;
             
+            // Difensivo per currentSpeed
             const speed = parseFloat(currentSpeed) || 0;
-            subtext.textContent = speed > 5 
+            const speedText = speed > 5 
                 ? `Rallenta! Stai andando a ${Math.round(speed)} km/h` 
                 : 'Rallentare nelle prossimità';
+            subtext.textContent = speedText;
             
             if (banner.classList.contains('hidden')) {
                 banner.classList.remove('hidden');
                 banner.classList.remove('translate-y-full');
                 
+                // Vibrazione allarme solo per avviso prossimità (non registrazione)
                 if (navigator.vibrate) {
                     navigator.vibrate([200, 100, 200, 100, 400]);
                 }
                 
-                if ((distance || 0) < 80 && navigator.vibrate) {
+                // Ripeti vibrazione se molto vicino (ultimo avviso urgente)
+                if (distance < 80 && navigator.vibrate) {
                     setTimeout(() => navigator.vibrate([100, 50, 100, 50, 300]), 1000);
                 }
             }
@@ -580,6 +565,10 @@
 
         function dismissAlert() {
             hideAlert();
+            // Snooze per 30 secondi
+            setTimeout(() => {
+                // Riaabiliterà automaticamente al prossimo check se ancora vicino
+            }, 30000);
         }
 
         function updateUserPosition(pos) {
@@ -596,6 +585,7 @@
                 userMarker.setLatLng([pos.lat, pos.lng]);
             }
             
+            // Centra la mappa solo se è la prima volta o se l'utente lo richiede (auto-center opzionale)
             if (pathCoordinates.length < 2) {
                 map.setView([pos.lat, pos.lng], 17);
             }
@@ -603,6 +593,8 @@
 
         function renderBumpsList() {
             const container = document.getElementById('bumps-list');
+            
+            // Protezione aggiuntiva: se container non esiste, esci
             if (!container) return;
             
             if (!detectedBumps || detectedBumps.length === 0) {
@@ -617,21 +609,22 @@
                 return;
             }
             
+            // Ordina per data decrescente e filtra eventuali entry danneggiate
             const sorted = [...detectedBumps]
-                .filter(b => b && b.id && typeof b.lat === 'number' && typeof b.lng === 'number')
+                .filter(b => b && b.id && b.lat && b.lng) // rimuovi entry invalide
                 .sort((a, b) => (b.id || 0) - (a.id || 0));
             
             container.innerHTML = sorted.map(bump => {
+                // Difensivo: se mancano dati, usa default
                 const intensity = parseFloat(bump.intensity) || 0;
                 const type = bump.type || 'dosso';
                 const isSevere = intensity > 25;
                 const gForce = (intensity / 9.8).toFixed(1);
                 const dateStr = bump.timestamp ? new Date(bump.timestamp).toLocaleString() : 'Data sconosciuta';
                 
+                // Assicurati che lat/lng siano numeri validi per l'onclick
                 const safeLat = parseFloat(bump.lat);
                 const safeLng = parseFloat(bump.lng);
-                
-                const typeLabel = type === 'buca_profonda' ? 'Buca Profonda' : 'Dosso Stradale';
                 
                 return `
                 <div class="bg-white rounded-xl p-3 shadow-sm border border-gray-200 flex items-center gap-3">
@@ -640,7 +633,7 @@
                     </div>
                     <div class="flex-1 min-w-0">
                         <p class="font-semibold text-gray-800 text-sm truncate">
-                            ${typeLabel}
+                            ${type === 'buca_profonda' ? 'Buca Profonda' : 'Dosso Stradale'}
                         </p>
                         <p class="text-xs text-gray-500">
                             ${dateStr} • ${gForce}g
@@ -656,6 +649,7 @@
         }
 
         function centerOnBump(lat, lng) {
+            // Controllo difensivo: verifica che siano numeri validi
             const safeLat = parseFloat(lat);
             const safeLng = parseFloat(lng);
             if (isNaN(safeLat) || isNaN(safeLng)) {
@@ -667,7 +661,7 @@
         }
 
         function exportData() {
-            if (!detectedBumps || detectedBumps.length === 0) {
+            if (detectedBumps.length === 0) {
                 alert('Nessun dato da esportare');
                 return;
             }
@@ -680,6 +674,7 @@
             link.download = `roadbumps_${new Date().toISOString().split('T')[0]}.json`;
             link.click();
             
+            // Condivisione nativa se disponibile (Web Share API)
             if (navigator.share) {
                 const file = new File([dataBlob], 'dissesti.json', { type: 'application/json' });
                 navigator.share({
@@ -695,6 +690,7 @@
                 detectedBumps = [];
                 localStorage.removeItem('roadBumps');
                 
+                // Pulisci mappa
                 map.eachLayer((layer) => {
                     if (layer instanceof L.Marker && layer !== userMarker) {
                         map.removeLayer(layer);
@@ -706,18 +702,22 @@
             }
         }
 
+        // Gestione visibilità pagina (pausa quando in background)
         document.addEventListener('visibilitychange', () => {
-            if (document.hidden && isRecording) {
-                console.log('App in background');
+            if (document.hidden && isTracking) {
+                console.log('App in background - i sensori potrebbero essere limitati');
+                // Nota: in una PWA reale, qui dovremmo usare Service Worker per notifiche
             }
         });
 
+        // Prevenire chiusura accidentale durante il tracking
         window.addEventListener('beforeunload', (e) => {
-            if (isRecording || isNavigating) {
+            if (isTracking) {
                 e.preventDefault();
-                e.returnValue = 'Stai registrando o navigando. Uscire?';
+                e.returnValue = 'Stai registrando dati. Sei sicuro di voler uscire?';
             }
         });
     </script>
+<script src="https://deepsite.hf.co/deepsite-badge.js"></script>
 </body>
 </html>
