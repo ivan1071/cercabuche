@@ -136,7 +136,7 @@
             <div class="flex items-center gap-3">
                 <i data-lucide="alert-octagon" class="w-6 h-6 animate-bounce"></i>
                 <div class="flex-1">
-                    <p class="font-bold">ATTENZIONE! Dosse rilevato</p>
+                    <p class="font-bold" id="alert-title">ATTENZIONE!</p>
                     <p class="text-sm opacity-90" id="alert-subtext">Rallentare nelle prossimità</p>
                 </div>
                 <button onclick="dismissAlert()" class="p-1 hover:bg-white/20 rounded">
@@ -157,7 +157,7 @@
                 <li class="flex gap-2"><i data-lucide="check-circle" class="w-5 h-5 text-green-500 shrink-0"></i> <span>In modalità navigazione ti avvisa dei dissesti già registrati</span></li>
                 <li class="flex gap-2"><i data-lucide="alert-circle" class="w-5 h-5 text-orange-500 shrink-0"></i> <span>Tieni l'app in primo piano (usa split screen con Maps)</span></li>
             </ul>
-            <button onclick="document.getElementById('info-modal').classList.add('hidden')" class="w-full bg-gray-800 text-white py-3 rounded-xl font-semibold">Ho capito</button>
+            <button onclick="closeModal()" class="w-full bg-gray-800 text-white py-3 rounded-xl font-semibold">Ho capito</button>
         </div>
     </div>
 
@@ -224,6 +224,11 @@
                 localStorage.setItem('roadBumps_seenInfo', 'true');
             }
         });
+
+        function closeModal() {
+            document.getElementById('info-modal').classList.add('hidden');
+            document.getElementById('info-modal').classList.remove('flex');
+        }
 
         function initMap() {
             map = L.map('map').setView([41.9028, 12.4964], 13);
@@ -529,9 +534,10 @@
 
         function showAlert(bump, distance, secondsToArrival) {
             const banner = document.getElementById('alert-banner');
-            const text = banner.querySelector('p.font-bold');
+            const title = document.getElementById('alert-title');
             const subtext = document.getElementById('alert-subtext');
             
+            // Protezione totale contro undefined
             const tipo = (bump && bump.type === 'buca_profonda') ? 'Buca profonda' : 'Dosso stradale';
             const dist = Math.round(parseFloat(distance) || 0);
             let distanceText = `tra ${dist}m`;
@@ -543,8 +549,8 @@
                 distanceText += ` (${Math.round(secs/60)}min)`;
             }
             
-            // Fix per undefinednull: usa sempre stringhe concrete
-            text.textContent = '⚠️ ' + (tipo || 'Dissesto') + ' ' + distanceText;
+            // NO undefinednull qui: costruzione stringa sicura
+            title.textContent = '⚠️ ' + String(tipo) + ' ' + String(distanceText);
             
             const speed = parseFloat(currentSpeed) || 0;
             subtext.textContent = speed > 5 
@@ -625,7 +631,6 @@
                 const safeLat = parseFloat(bump.lat);
                 const safeLng = parseFloat(bump.lng);
                 
-                // Fix: evita concatenazioni sporche
                 const typeLabel = type === 'buca_profonda' ? 'Buca Profonda' : 'Dosso Stradale';
                 
                 return `
