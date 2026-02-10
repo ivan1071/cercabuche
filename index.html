@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#ef4444">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>RoadBumps Tracker</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            overscroll-behavior: none;
+        }
+        
+        #map {
+            height: 50vh;
+            width: 100%;
+            z-index: 1;
+        }
+        
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+        
+        .pulse-ring {
+            position: absolute;
+            border-radius: 50%;
+            animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+        
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); opacity: 0.8; }
+            100% { transform: scale(2); opacity: 0; }
+        }
+        
+        .bump-alert {
+            animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
+        }
+        
+        @keyframes shake {
+            10%, 90% { transform: translate3d(-1px, 0, 0); }
+            20%, 80% { transform: translate3d(2px, 0, 0); }
+            30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+            40%, 60% { transform: translate3d(4px, 0, 0); }
+        }
+        
+        .sensor-bar {
+            transition: width 0.1s ease;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 h-screen flex flex-col overflow-hidden">
+
+    <!-- Header -->
+    <div class="glass-panel shadow-lg z-20 px-4 py-3 flex items-center justify-between border-b border-gray-200">
+        <div class="flex items-center gap-2">
+            <div class="bg-red-500 text-white p-2 rounded-lg">
+                <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-gray-800 text-lg leading-tight">RoadBumps</h1>
+                <p class="text-xs text-gray-500">Rilevatore dissesti stradali</p>
+            </div>
+        </div>
+        <div class="flex items-center gap-2">
+            <div id="status-indicator" class="w-3 h-3 rounded-full bg-gray-400"></div>
+            <span id="status-text" class="text-xs font-medium text-gray-600">Standby</span>
+        </div>
+    </div>
+
+    <!-- Mappa -->
+    <div id="map" class="shadow-inner"></div>
+
+    <!-- Pannello Controlli -->
+    <div class="flex-1 glass-panel flex flex-col overflow-hidden">
+        
+        <!-- Toolbar -->
+        <div class="p-4 border-b border-gray-200 flex gap-2 overflow-x-auto">
+            <button id="btn-start" onclick="toggleTracking()" class="flex-1 bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-green-500/30">
+                <i data-lucide="play" class="w-5 h-5"></i>
+                <span>Avvia</span>
+            </button>
+            
+            <button onclick="exportData()" class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-xl flex items-center gap-2 transition-all active:scale-95 shadow-lg shadow-blue-500/30">
+                <i data-lucide="download" class="w-5 h-5"></i>
+            </button>
+            
+            <button onclick="clearData()" class="bg-gray-500 hover:bg-gray-600 text-white font-semibold py-3 px-4 rounded-xl flex items-center gap-2 transition-all active:scale-95">
+                <i data-lucide="trash-2" class="w-5 h-5"></i>
+            </button>
+        </div>
+
+        <!-- Sensori Live -->
+        <div class="px-4 py-3 bg-gray-50 border-b border-gray-200">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-semibold text-gray-600 uppercase tracking-wider">Intensità Scossa</span>
+                <span id="g-force" class="text-sm font-bold text-gray-800">0.0g</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                <div id="intensity-bar" class="sensor-bar bg-gradient-to-r from-green-400 via-yellow-400 to-red-500 h-full rounded-full" style="width: 0%"></div>
+            </div>
+            <div class="flex justify-between mt-1 text-xs text-gray-400">
+                <span>Lieve</span>
+                <span>Moderata</span>
+                <span>Forte</span>
+            </div>
+        </div>
+
+        <!-- Lista Dissesti -->
+        <div class="flex-1 overflow-y-auto p-4 space-y-3" id="bumps-list">
+            <div class="text-center text-gray-400 py-8">
+                <i data-lucide="map-pin" class="w-12 h-12 mx-auto mb-2 opacity-20"></i>
+                <p class="text-sm">Nessun dissesto rilevato</p>
+                <p class="text-xs mt-1">Avvia il tracking per iniziare</p>
+            </div>
+        </div>
+
+        <!-- Alert Banner (nascosto di default) -->
+        <div id="alert-banner" class="hidden bg-red-500 text-white p-4 shadow-lg transform transition-transform">
+            <div class="flex items-center gap-3">
+                <i data-lucide="alert-octagon" class="w-6 h-6 animate-bounce"></i>
+                <div class="flex-1">
+                    <p class="font-bold">ATTENZIONE! Dosse rilevato</p>
+                    <p class="text-sm opacity-90">Rallentare nelle prossimità</p>
+                </div>
+                <button onclick="dismissAlert()" class="p-1 hover:bg-white/20 rounded">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Info -->
+    <div id="info-modal" class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <h3 class="font-bold text-lg mb-2">Come usare l'app</h3>
+            <ul class="space-y-2 text-sm text-gray-600 mb-4">
+                <li class="flex gap-2"><i data-lucide="check-circle" class="w-5 h-5 text-green-500 shrink-0"></i> <span>Fissa il telefono al cruscotto in posizione verticale</span></li>
+                <li class="flex gap-2"><i data-lucide="check-circle" class="w-5 h-5 text-green-500 shrink-0"></i> <span>Avvia il tracking prima di partire</span></li>
+                <li class="flex gap-2"><i data-lucide="check-circle" class="w-5 h-5 text-green-500 shrink-0"></i> <span>L'app rileva automaticamente scosse verticali (buche/dossi)</span></li>
+                <li class="flex gap-2"><i data-lucide="alert-circle" class="w-5 h-5 text-orange-500 shrink-0"></i> <span>Tieni l'app in primo piano (usa lo split screen con Maps)</span></li>
+            </ul>
+            <button onclick="document.getElementById('info-modal').classList.add('hidden')" class="w-full bg-gray-800 text-white py-3 rounded-xl font-semibold">Ho capito</button>
+        </div>
+    </div>
+
+    <script>
+        // Inizializza Lucide icons
+        lucide.createIcons();
+
+        // Variabili globali
+        let map;
+        let userMarker;
+        let pathLine;
+        let isTracking = false;
+        let accelerometer = null;
+        let geolocationId = null;
+        let detectedBumps = JSON.parse(localStorage.getItem('roadBumps') || '[]');
+        let currentPosition = null;
+        let pathCoordinates = [];
+        
+        // Costanti
+        const BUMP_THRESHOLD = 15; // m/s² (circa 1.5g di accelerazione improvvisa)
+        const COOLDOWN_MS = 2000; // 2 secondi tra un rilevamento e l'altro
+        let lastBumpTime = 0;
+        let proximityCheckInterval;
+
+        // Inizializzazione
+        document.addEventListener('DOMContentLoaded', () => {
+            initMap();
+            renderBumpsList();
+            checkPermissions();
+            
+            // Mostra info al primo avvio
+            if (!localStorage.getItem('roadBumps_seenInfo')) {
+                document.getElementById('info-modal').classList.remove('hidden');
+                document.getElementById('info-modal').classList.add('flex');
+                localStorage.setItem('roadBumps_seenInfo', 'true');
+            }
+        });
+
+        function initMap() {
+            map = L.map('map').setView([41.9028, 12.4964], 13); // Roma default
+            
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors',
+                maxZoom: 19
+            }).addTo(map);
+
+            // Ripristina marker esistenti
+            detectedBumps.forEach(bump => {
+                addBumpMarker(bump);
+            });
+        }
+
+        function checkPermissions() {
+            // Verifica supporto sensori
+            if ('Accelerometer' in window) {
+                console.log('Accelerometer supportato');
+            } else {
+                alert('Il tuo dispositivo non supporta l\'Accelerometer API. Prova con Chrome su Android.');
+            }
+        }
+
+        async function toggleTracking() {
+            const btn = document.getElementById('btn-start');
+            const statusInd = document.getElementById('status-indicator');
+            const statusText = document.getElementById('status-text');
+            
+            if (isTracking) {
+                stopTracking();
+                btn.innerHTML = '<i data-lucide="play" class="w-5 h-5"></i><span>Avvia</span>';
+                btn.classList.remove('bg-red-500', 'hover:bg-red-600', 'shadow-red-500/30');
+                btn.classList.add('bg-green-500', 'hover:bg-green-600', 'shadow-green-500/30');
+                statusInd.classList.remove('bg-green-500', 'animate-pulse');
+                statusInd.classList.add('bg-gray-400');
+                statusText.textContent = 'Standby';
+                lucide.createIcons();
+            } else {
+                try {
+                    await startTracking();
+                    btn.innerHTML = '<i data-lucide="square" class="w-5 h-5"></i><span>Stop</span>';
+                    btn.classList.remove('bg-green-500', 'hover:bg-green-600', 'shadow-green-500/30');
+                    btn.classList.add('bg-red-500', 'hover:bg-red-600', 'shadow-red-500/30');
+                    statusInd.classList.remove('bg-gray-400');
+                    statusInd.classList.add('bg-green-500', 'animate-pulse');
+                    statusText.textContent = 'Registrazione...';
+                    lucide.createIcons();
+                } catch (e) {
+                    alert('Errore nell\'avvio: ' + e.message);
+                }
+            }
+        }
+
+        async function startTracking() {
+            // 1. Avvia Geolocalizzazione
+            if (!navigator.geolocation) {
+                throw new Error('Geolocalizzazione non supportata');
+            }
+
+            geolocationId = navigator.geolocation.watchPosition(
+                (position) => {
+                    currentPosition = {
+                        lat: position.coords.latitude,
+                        lng: position.coords.longitude,
+                        accuracy: position.coords.accuracy,
+                        timestamp: Date.now()
+                    };
+                    
+                    updateUserPosition(currentPosition);
+                    pathCoordinates.push([currentPosition.lat, currentPosition.lng]);
+                    
+                    if (pathLine) {
+                        pathLine.setLatLngs(pathCoordinates);
+                    } else {
+                        pathLine = L.polyline(pathCoordinates, {color: 'blue', weight: 4, opacity: 0.7}).addTo(map);
+                    }
+                },
+                (err) => console.error('GPS Error:', err),
+                { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
+            );
+
+            // 2. Avvia Accelerometro
+            if ('Accelerometer' in window) {
+                try {
+                    // Richiedi permesso su Android/Chrome
+                    if (navigator.permissions) {
+                        const result = await navigator.permissions.query({ name: 'accelerometer' });
+                        if (result.state === 'denied') {
+                            throw new Error('Permesso accelerometro negato');
+                        }
+                    }
+
+                    accelerometer = new Accelerometer({ frequency: 60 });
+                    
+                    accelerometer.addEventListener('reading', () => {
+                        processAccelerometerData(accelerometer.x, accelerometer.y, accelerometer.z);
+                    });
+                    
+                    accelerometer.start();
+                } catch (e) {
+                    console.warn('Accelerometro non disponibile, uso mock per test:', e);
+                    // Per testing su desktop: simula con dati random
+                    // startMockSensors(); 
+                }
+            } else {
+                alert('API Accelerometro non supportata. Usa Chrome su Android con HTTPS.');
+            }
+
+            // 3. Avvia controllo prossimità dissesti
+            proximityCheckInterval = setInterval(checkProximity, 3000);
+            
+            isTracking = true;
+        }
+
+        function stopTracking() {
+            isTracking = false;
+            
+            if (geolocationId) {
+                navigator.geolocation.clearWatch(geolocationId);
+            }
+            
+            if (accelerometer) {
+                accelerometer.stop();
+                accelerometer = null;
+            }
+            
+            if (proximityCheckInterval) {
+                clearInterval(proximityCheckInterval);
+            }
+        }
+
+        function processAccelerometerData(x, y, z) {
+            if (!currentPosition) return;
+            
+            // Calcola accelerazione totale (rimuovendo la gravità ~9.8 m/s² sull'asse Z)
+            // Consideriamo scosse sull'asse Z (su-giù) come dissesti stradali
+            const verticalAccel = Math.abs(z - 9.8); // Sottraiamo gravità standard
+            const totalAccel = Math.sqrt(x*x + y*y + z*z);
+            
+            // Aggiorna UI barra
+            const intensity = Math.min((verticalAccel / 20) * 100, 100);
+            document.getElementById('intensity-bar').style.width = intensity + '%';
+            document.getElementById('g-force').textContent = (verticalAccel / 9.8).toFixed(1) + 'g';
+            
+            // Cambia colore in base all'intensità
+            const bar = document.getElementById('intensity-bar');
+            if (verticalAccel > BUMP_THRESHOLD) {
+                bar.classList.remove('from-green-400', 'via-yellow-400', 'to-red-500');
+                bar.classList.add('bg-red-600');
+            } else {
+                bar.classList.add('from-green-400', 'via-yellow-400', 'to-red-500');
+                bar.classList.remove('bg-red-600');
+            }
+            
+            // Rileva dissesto
+            const now = Date.now();
+            if (verticalAccel > BUMP_THRESHOLD && (now - lastBumpTime > COOLDOWN_MS)) {
+                lastBumpTime = now;
+                registerBump(currentPosition, verticalAccel);
+            }
+        }
+
+        function registerBump(position, intensity) {
+            const bump = {
+                id: Date.now(),
+                lat: position.lat,
+                lng: position.lng,
+                intensity: intensity,
+                timestamp: new Date().toISOString(),
+                type: intensity > 25 ? 'buca_profonda' : 'dosso'
+            };
+            
+            detectedBumps.push(bump);
+            localStorage.setItem('roadBumps', JSON.stringify(detectedBumps));
+            
+            // Aggiungi a mappa
+            addBumpMarker(bump);
+            
+            // Aggiorna lista
+            renderBumpsList();
+            
+            // Feedback tattile/vibrazione se disponibile
+            if (navigator.vibrate) {
+                navigator.vibrate([100, 50, 100]);
+            }
+            
+            // Animazione UI
+            const list = document.getElementById('bumps-list');
+            list.classList.add('bump-alert');
+            setTimeout(() => list.classList.remove('bump-alert'), 500);
+        }
+
+        function addBumpMarker(bump) {
+            const color = bump.intensity > 25 ? 'red' : 'orange';
+            const icon = L.divIcon({
+                className: 'custom-div-icon',
+                html: `<div style="background-color: ${color}; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
+                iconSize: [12, 12],
+                iconAnchor: [6, 6]
+            });
+            
+            const marker = L.marker([bump.lat, bump.lng], { icon }).addTo(map);
+            
+            const popupContent = `
+                <div class="text-sm">
+                    <strong>${bump.type === 'buca_profonda' ? 'Buca Profonda' : 'Dosso/Dissesto'}</strong><br>
+                    Intensità: ${(bump.intensity/9.8).toFixed(1)}g<br>
+                    <small>${new Date(bump.timestamp).toLocaleString()}</small>
+                </div>
+            `;
+            
+            marker.bindPopup(popupContent);
+        }
+
+        function checkProximity() {
+            if (!currentPosition || detectedBumps.length === 0) return;
+            
+            const WARNING_DISTANCE = 200; // metri
+            
+            let nearestBump = null;
+            let minDistance = Infinity;
+            
+            detectedBumps.forEach(bump => {
+                const dist = calculateDistance(
+                    currentPosition.lat, currentPosition.lng,
+                    bump.lat, bump.lng
+                );
+                
+                if (dist < minDistance && dist < WARNING_DISTANCE) {
+                    minDistance = dist;
+                    nearestBump = bump;
+                }
+            });
+            
+            if (nearestBump) {
+                showAlert(nearestBump, minDistance);
+            } else {
+                hideAlert();
+            }
+        }
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371000; // Raggio terra in metri
+            const φ1 = lat1 * Math.PI/180;
+            const φ2 = lat2 * Math.PI/180;
+            const Δφ = (lat2-lat1) * Math.PI/180;
+            const Δλ = (lon2-lon1) * Math.PI/180;
+
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+            return R * c;
+        }
+
+        function showAlert(bump, distance) {
+            const banner = document.getElementById('alert-banner');
+            const text = banner.querySelector('p.font-bold');
+            
+            text.textContent = `ATTENZIONE! ${bump.type === 'buca_profonda' ? 'Buca' : 'Dosso'} tra ${Math.round(distance)}m`;
+            
+            if (banner.classList.contains('hidden')) {
+                banner.classList.remove('hidden');
+                banner.classList.remove('translate-y-full');
+                
+                // Vibrazione allarme
+                if (navigator.vibrate) {
+                    navigator.vibrate([200, 100, 200, 100, 400]);
+                }
+            }
+        }
+
+        function hideAlert() {
+            const banner = document.getElementById('alert-banner');
+            if (!banner.classList.contains('hidden')) {
+                banner.classList.add('hidden');
+            }
+        }
+
+        function dismissAlert() {
+            hideAlert();
+            // Snooze per 30 secondi
+            setTimeout(() => {
+                // Riaabiliterà automaticamente al prossimo check se ancora vicino
+            }, 30000);
+        }
+
+        function updateUserPosition(pos) {
+            if (!userMarker) {
+                userMarker = L.circleMarker([pos.lat, pos.lng], {
+                    radius: 8,
+                    fillColor: "#3b82f6",
+                    color: "#fff",
+                    weight: 2,
+                    opacity: 1,
+                    fillOpacity: 0.8
+                }).addTo(map);
+            } else {
+                userMarker.setLatLng([pos.lat, pos.lng]);
+            }
+            
+            // Centra la mappa solo se è la prima volta o se l'utente lo richiede (auto-center opzionale)
+            if (pathCoordinates.length < 2) {
+                map.setView([pos.lat, pos.lng], 17);
+            }
+        }
+
+        function renderBumpsList() {
+            const container = document.getElementById('bumps-list');
+            
+            if (detectedBumps.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center text-gray-400 py-8">
+                        <i data-lucide="map-pin" class="w-12 h-12 mx-auto mb-2 opacity-20"></i>
+                        <p class="text-sm">Nessun dissesto rilevato</p>
+                        <p class="text-xs mt-1">Avvia il tracking per iniziare</p>
+                    </div>
+                `;
+                lucide.createIcons();
+                return;
+            }
+            
+            // Ordina per data decrescente
+            const sorted = [...detectedBumps].sort((a, b) => b.id - a.id);
+            
+            container.innerHTML = sorted.map(bump => `
+                <div class="bg-white rounded-xl p-3 shadow-sm border border-gray-200 flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-full ${bump.intensity > 25 ? 'bg-red-100 text-red-600' : 'bg-orange-100 text-orange-600'} flex items-center justify-center shrink-0">
+                        <i data-lucide="${bump.intensity > 25 ? 'alert-triangle' : 'alert-circle'}" class="w-5 h-5"></i>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p class="font-semibold text-gray-800 text-sm truncate">
+                            ${bump.type === 'buca_profonda' ? 'Buca Profonda' : 'Dosso Stradale'}
+                        </p>
+                        <p class="text-xs text-gray-500">
+                            ${new Date(bump.timestamp).toLocaleString()} • ${(bump.intensity/9.8).toFixed(1)}g
+                        </p>
+                    </div>
+                    <button onclick="centerOnBump(${bump.lat}, ${bump.lng})" class="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-blue-500">
+                        <i data-lucide="map-pin" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            `).join('');
+            
+            lucide.createIcons();
+        }
+
+        function centerOnBump(lat, lng) {
+            map.setView([lat, lng], 18);
+        }
+
+        function exportData() {
+            if (detectedBumps.length === 0) {
+                alert('Nessun dato da esportare');
+                return;
+            }
+            
+            const dataStr = JSON.stringify(detectedBumps, null, 2);
+            const dataBlob = new Blob([dataStr], {type: 'application/json'});
+            const url = URL.createObjectURL(dataBlob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `roadbumps_${new Date().toISOString().split('T')[0]}.json`;
+            link.click();
+            
+            // Condivisione nativa se disponibile (Web Share API)
+            if (navigator.share) {
+                const file = new File([dataBlob], 'dissesti.json', { type: 'application/json' });
+                navigator.share({
+                    title: 'Dati RoadBumps',
+                    text: `Esportati ${detectedBumps.length} dissesti stradali`,
+                    files: [file]
+                }).catch(console.error);
+            }
+        }
+
+        function clearData() {
+            if (confirm('Sei sicuro di voler cancellare tutti i dati raccolti?')) {
+                detectedBumps = [];
+                localStorage.removeItem('roadBumps');
+                
+                // Pulisci mappa
+                map.eachLayer((layer) => {
+                    if (layer instanceof L.Marker && layer !== userMarker) {
+                        map.removeLayer(layer);
+                    }
+                });
+                
+                renderBumpsList();
+                hideAlert();
+            }
+        }
+
+        // Gestione visibilità pagina (pausa quando in background)
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && isTracking) {
+                console.log('App in background - i sensori potrebbero essere limitati');
+                // Nota: in una PWA reale, qui dovremmo usare Service Worker per notifiche
+            }
+        });
+
+        // Prevenire chiusura accidentale durante il tracking
+        window.addEventListener('beforeunload', (e) => {
+            if (isTracking) {
+                e.preventDefault();
+                e.returnValue = 'Stai registrando dati. Sei sicuro di voler uscire?';
+            }
+        });
+    </script>
+<script src="https://deepsite.hf.co/deepsite-badge.js"></script>
+</body>
+</html>
