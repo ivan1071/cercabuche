@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="theme-color" content="#ef4444">
-    <meta name="apple-mobile-web-app-capable" content="yes">
     <title>RoadBumps Tracker</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
@@ -15,7 +14,7 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
         body { font-family: 'Inter', sans-serif; overscroll-behavior: none; }
-        #map { height: 45vh; width: 100%; z-index: 1; }
+        #map { height: 45vh; width: 100%; }
         .glass-panel { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); }
         
         @keyframes shake {
@@ -30,12 +29,9 @@
 </head>
 <body class="bg-gray-100 h-screen flex flex-col overflow-hidden">
 
-    <!-- Header -->
     <div class="glass-panel shadow-lg z-20 px-4 py-2 flex items-center justify-between border-b border-gray-200">
         <div class="flex items-center gap-2">
-            <div class="bg-red-500 text-white p-2 rounded-lg">
-                <i data-lucide="alert-triangle" class="w-5 h-5"></i>
-            </div>
+            <div class="bg-red-500 text-white p-2 rounded-lg"><i data-lucide="alert-triangle" class="w-5 h-5"></i></div>
             <div>
                 <h1 class="font-bold text-gray-800 text-base">RoadBumps</h1>
                 <p class="text-xs text-gray-500" id="stats-text">Pronto</p>
@@ -47,37 +43,28 @@
         </div>
     </div>
 
-    <!-- Mappa -->
     <div id="map" class="shadow-inner"></div>
 
-    <!-- Controlli -->
     <div class="flex-1 glass-panel flex flex-col overflow-hidden">
-        
-        <!-- Toolbar -->
         <div class="p-3 border-b border-gray-200 flex gap-2 overflow-x-auto">
             <button id="btn-main" onclick="toggleMain()" class="flex-1 bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-3 rounded-lg flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg text-sm">
                 <i data-lucide="play" class="w-4 h-4"></i><span>Avvia</span>
             </button>
-            
             <button id="btn-stop" onclick="stopAll()" class="hidden bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-3 rounded-lg flex items-center gap-2 text-sm">
                 <i data-lucide="x" class="w-4 h-4"></i><span>Termina</span>
             </button>
-            
             <button onclick="document.getElementById('import-input').click()" class="bg-purple-500 hover:bg-purple-600 text-white p-2 rounded-lg shadow-lg" title="Importa JSON">
                 <i data-lucide="upload" class="w-4 h-4"></i>
             </button>
             <input type="file" id="import-input" accept=".json" class="hidden" onchange="importData(this)">
-            
             <button onclick="exportData()" class="bg-blue-500 hover:bg-blue-600 text-white p-2 rounded-lg shadow-lg" title="Esporta JSON">
                 <i data-lucide="download" class="w-4 h-4"></i>
             </button>
-            
             <button onclick="clearData()" class="bg-gray-500 hover:bg-gray-600 text-white p-2 rounded-lg">
                 <i data-lucide="trash-2" class="w-4 h-4"></i>
             </button>
         </div>
 
-        <!-- Soglia e Privacy -->
         <div class="px-3 py-2 bg-gray-50 border-b border-gray-200 space-y-2">
             <div class="flex items-center justify-between">
                 <span class="text-xs font-semibold text-gray-600">Soglia rilevamento</span>
@@ -95,7 +82,6 @@
             </div>
         </div>
 
-        <!-- Sensori -->
         <div class="px-3 py-2 bg-gray-50 border-b border-gray-200">
             <div class="flex justify-between mb-1">
                 <span class="text-xs font-semibold text-gray-600">Intensità</span>
@@ -109,7 +95,6 @@
             </div>
         </div>
 
-        <!-- Lista -->
         <div class="flex-1 overflow-y-auto p-3 space-y-2" id="bumps-list">
             <div class="text-center text-gray-400 py-4">
                 <i data-lucide="map-pin" class="w-8 h-8 mx-auto mb-1 opacity-20"></i>
@@ -117,7 +102,6 @@
             </div>
         </div>
 
-        <!-- Alert -->
         <div id="alert-banner" class="hidden bg-red-500 text-white p-3 shadow-lg">
             <div class="flex items-center gap-2">
                 <i data-lucide="alert-octagon" class="w-5 h-5 animate-bounce"></i>
@@ -125,9 +109,7 @@
                     <p class="font-bold text-sm" id="alert-title">ATTENZIONE!</p>
                     <p class="text-xs opacity-90" id="alert-desc">Rallentare</p>
                 </div>
-                <button onclick="hideAlert()" class="p-1 hover:bg-white/20 rounded">
-                    <i data-lucide="x" class="w-4 h-4"></i>
-                </button>
+                <button onclick="hideAlert()" class="p-1 hover:bg-white/20 rounded"><i data-lucide="x" class="w-4 h-4"></i></button>
             </div>
         </div>
     </div>
@@ -135,11 +117,8 @@
     <script>
         lucide.createIcons();
 
-        // Stati
         let isRecording = false;
         let isNavigating = false;
-        
-        // Variabili
         let map, userMarker, pathLine;
         let accelerometer = null;
         let geolocationId = null;
@@ -150,14 +129,11 @@
         let currentSpeed = 0;
         let lastBumpTime = 0;
         let proximityCheckInterval;
-        
-        // Configurabile
-        let BUMP_THRESHOLD = 12; // Default 12 m/s² (1.2g) - abbassato!
-        const COOLDOWN_MS = 3000; // 3 secondi
-        const CLUSTER_RADIUS = 8; // 8 metri per considerare stessa buca
-        const BASE_WARNING_DISTANCE = 150; // Avviso a 150m (adatto a città)
+        let BUMP_THRESHOLD = 12;
+        const COOLDOWN_MS = 3000;
+        const CLUSTER_RADIUS = 8;
+        const BASE_WARNING_DISTANCE = 150;
 
-        // Caricamento
         try {
             const stored = localStorage.getItem('roadBumps');
             if (stored) {
@@ -166,9 +142,7 @@
                     detectedBumps = parsed.filter(b => b && b.id && !isNaN(b.lat) && !isNaN(b.lng));
                 }
             }
-        } catch (e) {
-            detectedBumps = [];
-        }
+        } catch (e) { detectedBumps = []; }
 
         document.addEventListener('DOMContentLoaded', () => {
             initMap();
@@ -189,11 +163,9 @@
         }
 
         function updateStats() {
-            const count = detectedBumps.length;
-            document.getElementById('stats-text').textContent = `${count} dissesti salvati`;
+            document.getElementById('stats-text').textContent = `${detectedBumps.length} dissesti salvati`;
         }
 
-        // STATI
         async function toggleMain() {
             if (!isNavigating && !isRecording) {
                 await startRecordingAndNav();
@@ -245,7 +217,6 @@
             hideAlert();
         }
 
-        // AVVIO
         async function startRecordingAndNav() {
             if (!navigator.geolocation) throw new Error('GPS non supportato');
             
@@ -258,7 +229,6 @@
                         speed: pos.coords.speed
                     };
                     
-                    // FIX: controlla lastPosition valido prima di calcolare distanza
                     if (lastPosition && !isNaN(lastPosition.lat) && !isNaN(lastPosition.lng)) {
                         const dist = calculateDistance(lastPosition.lat, lastPosition.lng, newPos.lat, newPos.lng);
                         const timeDiff = (newPos.timestamp - lastPosition.timestamp) / 1000;
@@ -307,15 +277,12 @@
                         processAccel(accelerometer.x, accelerometer.y, accelerometer.z);
                     });
                     accelerometer.start();
-                } catch (e) {
-                    console.warn('Accelerometro non disponibile:', e);
-                }
+                } catch (e) { console.warn('Accelerometro non disponibile:', e); }
             }
         }
 
         function processAccel(x, y, z) {
             if (!currentPosition) return;
-            
             const verticalAccel = Math.abs((z || 0) - 9.8);
             const intensity = Math.min((verticalAccel / 20) * 100, 100);
             
@@ -331,8 +298,6 @@
 
         function registerBump(position, intensity) {
             const now = Date.now();
-            
-            // Clustering: evita doppioni entro 8m e 10s
             const duplicate = detectedBumps.find(b => {
                 if (!b || !b.lat || !b.lng) return false;
                 const dist = calculateDistance(position.lat, position.lng, b.lat, b.lng);
@@ -374,15 +339,12 @@
             localStorage.setItem('roadBumps', JSON.stringify(detectedBumps));
         }
 
-        // IMPORT / EXPORT / PRIVACY
         function exportData() {
             if (detectedBumps.length === 0) return alert('Nessun dato');
-            
             const privacyOn = document.getElementById('privacy-toggle').checked;
             let dataToExport = detectedBumps;
             
             if (privacyOn) {
-                // Fuzzing: sposta coordinate di ±10m (circa 0.00009 gradi)
                 dataToExport = detectedBumps.map(b => ({
                     ...b,
                     lat: b.lat + (Math.random() - 0.5) * 0.00018,
@@ -415,8 +377,6 @@
                     
                     imported.forEach(imp => {
                         if (!imp || !imp.lat || !imp.lng || isNaN(imp.lat) || isNaN(imp.lng)) return;
-                        
-                        // Controlla duplicato (entro 8m)
                         const duplicate = detectedBumps.find(b => {
                             if (!b || !b.lat || !b.lng) return false;
                             const dist = calculateDistance(b.lat, b.lng, imp.lat, imp.lng);
@@ -424,7 +384,6 @@
                         });
                         
                         if (duplicate) {
-                            // Aggiorna se importato è più forte
                             if ((imp.intensity || 0) > (duplicate.intensity || 0)) {
                                 duplicate.intensity = imp.intensity;
                                 duplicate.type = imp.type;
@@ -476,7 +435,6 @@
             
             const marker = L.marker([bump.lat, bump.lng], { icon }).addTo(map);
             
-            // Template literal per evitare undefinednull
             const typeLabel = bump.type === 'buca_profonda' ? 'Buca Profonda' : (bump.type === 'dosso' ? 'Dosso' : 'Sussulto');
             const source = isImport ? ' (Importato)' : '';
             const gForce = (intensity / 9.8).toFixed(1);
@@ -490,7 +448,6 @@
             `);
         }
 
-        // NAVIGAZIONE
         function checkProximity() {
             if (!currentPosition || detectedBumps.length === 0 || !isNavigating) return;
             
@@ -519,16 +476,13 @@
             }
         }
 
-        // FIX: calculateDistance con protezione totale contro undefined/null
         function calculateDistance(lat1, lon1, lat2, lon2) {
             const p1 = parseFloat(lat1);
             const p2 = parseFloat(lon1);
             const p3 = parseFloat(lat2);
             const p4 = parseFloat(lon2);
             
-            if (isNaN(p1) || isNaN(p2) || isNaN(p3) || isNaN(p4)) {
-                return Infinity; // Ritorna infinito se coordinate invalide
-            }
+            if (isNaN(p1) || isNaN(p2) || isNaN(p3) || isNaN(p4)) return Infinity;
             
             const R = 6371000;
             const φ1 = p1 * Math.PI/180;
@@ -550,7 +504,6 @@
             const dist = Math.round(parseFloat(distance) || 0);
             const secs = parseInt(seconds) || 0;
             
-            // FIX: solo template literals, mai concatenazione con +
             title.textContent = `⚠️ ${tipo} tra ${dist}m${secs > 0 ? ` (${secs}s)` : ''}`;
             
             const speed = parseFloat(currentSpeed) || 0;
