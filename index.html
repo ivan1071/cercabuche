@@ -25,10 +25,22 @@
         }
         .bump-alert { animation: shake 0.5s; }
         .sensor-bar { transition: width 0.1s ease; }
+        
+        .modal {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5); z-index: 50;
+            display: none; align-items: center; justify-content: center; padding: 1rem;
+        }
+        .modal.active { display: flex; }
+        .modal-content {
+            background: white; border-radius: 1rem; padding: 1.5rem;
+            max-width: 400px; width: 100%; max-height: 80vh; overflow-y: auto;
+        }
     </style>
 </head>
 <body class="bg-gray-100 h-screen flex flex-col overflow-hidden">
 
+    <!-- Header -->
     <div class="glass-panel shadow-lg z-20 px-4 py-2 flex items-center justify-between border-b border-gray-200">
         <div class="flex items-center gap-2">
             <div class="bg-red-500 text-white p-2 rounded-lg"><i data-lucide="alert-triangle" class="w-5 h-5"></i></div>
@@ -46,6 +58,7 @@
     <div id="map" class="shadow-inner"></div>
 
     <div class="flex-1 glass-panel flex flex-col overflow-hidden">
+        <!-- Toolbar -->
         <div class="p-3 border-b border-gray-200 flex gap-2 overflow-x-auto">
             <button id="btn-main" onclick="toggleMain()" class="flex-1 bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-3 rounded-lg flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg text-sm">
                 <i data-lucide="play" class="w-4 h-4"></i><span>Avvia</span>
@@ -53,11 +66,10 @@
             <button id="btn-stop" onclick="stopAll()" class="hidden bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-3 rounded-lg flex items-center gap-2 text-sm">
                 <i data-lucide="x" class="w-4 h-4"></i><span>Termina</span>
             </button>
-            <button onclick="document.getElementById('import-input').click()" class="bg-purple-500 hover:bg-purple-600 text-white p-2 rounded-lg shadow-lg" title="Importa JSON">
+            <button onclick="openImportModal()" class="bg-purple-500 hover:bg-purple-600 text-white p-2 rounded-lg shadow-lg" title="Importa JSON">
                 <i data-lucide="upload" class="w-4 h-4"></i>
             </button>
-            <input type="file" id="import-input" accept=".json" class="hidden" onchange="importData(this)">
-            <button onclick="exportData()" class="bg-blue-500 hover:bg-blue-600 text-white p-2 rounded-lg shadow-lg" title="Esporta JSON">
+            <button onclick="openExportModal()" class="bg-blue-500 hover:bg-blue-600 text-white p-2 rounded-lg shadow-lg" title="Esporta JSON">
                 <i data-lucide="download" class="w-4 h-4"></i>
             </button>
             <button onclick="clearData()" class="bg-gray-500 hover:bg-gray-600 text-white p-2 rounded-lg">
@@ -65,8 +77,9 @@
             </button>
         </div>
 
-        <div class="px-3 py-2 bg-gray-50 border-b border-gray-200 space-y-2">
-            <div class="flex items-center justify-between">
+        <!-- Soglia -->
+        <div class="px-3 py-2 bg-gray-50 border-b border-gray-200">
+            <div class="flex items-center justify-between mb-2">
                 <span class="text-xs font-semibold text-gray-600">Soglia rilevamento</span>
                 <select id="threshold-select" onchange="updateThreshold()" class="text-xs border rounded px-2 py-1 bg-white">
                     <option value="8">8 m/s² (Molto sensibile)</option>
@@ -76,12 +89,9 @@
                     <option value="20">20 m/s² (Solo forti)</option>
                 </select>
             </div>
-            <div class="flex items-center gap-2">
-                <input type="checkbox" id="privacy-toggle" class="w-4 h-4 rounded border-gray-300" checked>
-                <label for="privacy-toggle" class="text-xs text-gray-600">Privacy: aggiungi offset ±10m all'esportazione</label>
-            </div>
         </div>
 
+        <!-- Sensori -->
         <div class="px-3 py-2 bg-gray-50 border-b border-gray-200">
             <div class="flex justify-between mb-1">
                 <span class="text-xs font-semibold text-gray-600">Intensità</span>
@@ -95,6 +105,7 @@
             </div>
         </div>
 
+        <!-- Lista -->
         <div class="flex-1 overflow-y-auto p-3 space-y-2" id="bumps-list">
             <div class="text-center text-gray-400 py-4">
                 <i data-lucide="map-pin" class="w-8 h-8 mx-auto mb-1 opacity-20"></i>
@@ -102,6 +113,7 @@
             </div>
         </div>
 
+        <!-- Alert -->
         <div id="alert-banner" class="hidden bg-red-500 text-white p-3 shadow-lg">
             <div class="flex items-center gap-2">
                 <i data-lucide="alert-octagon" class="w-5 h-5 animate-bounce"></i>
@@ -110,6 +122,50 @@
                     <p class="text-xs opacity-90" id="alert-desc">Rallentare</p>
                 </div>
                 <button onclick="hideAlert()" class="p-1 hover:bg-white/20 rounded"><i data-lucide="x" class="w-4 h-4"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Export -->
+    <div id="export-modal" class="modal">
+        <div class="modal-content">
+            <h3 class="font-bold text-lg mb-3">Esporta dati</h3>
+            <div class="space-y-3 mb-4">
+                <div>
+                    <label class="text-xs font-semibold text-gray-600 block mb-1">Nome zona (opzionale)</label>
+                    <input type="text" id="export-zone" placeholder="es: Palermo, Milano-Centro..." class="w-full border rounded px-3 py-2 text-sm">
+                    <p class="text-xs text-gray-400 mt-1">Il file sarà nominato: Zona_Data.json</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" id="privacy-toggle" class="w-4 h-4 rounded border-gray-300" checked>
+                    <label for="privacy-toggle" class="text-xs text-gray-600">Privacy: aggiungi offset ±10m</label>
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="confirmExport()" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white py-2 rounded-lg font-semibold text-sm">Esporta</button>
+                <button onclick="closeModal('export-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 py-2 rounded-lg font-semibold text-sm">Annulla</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Import -->
+    <div id="import-modal" class="modal">
+        <div class="modal-content">
+            <h3 class="font-bold text-lg mb-3">Importa dati</h3>
+            <div class="space-y-3 mb-4">
+                <div>
+                    <label class="text-xs font-semibold text-gray-600 block mb-1">File JSON</label>
+                    <input type="file" id="import-input" accept=".json" class="w-full text-xs border rounded p-2 bg-white">
+                </div>
+                <div>
+                    <label class="text-xs font-semibold text-gray-600 block mb-1">Carica solo entro: <span id="km-value">20</span> km</label>
+                    <input type="range" id="import-radius" min="5" max="50" value="20" class="w-full" oninput="document.getElementById('km-value').textContent = this.value">
+                    <p class="text-xs text-gray-400 mt-1">Utile per ignorare dati di altre città. Sei a: <span id="current-pos">posizione non disponibile</span></p>
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="confirmImport()" class="flex-1 bg-purple-500 hover:bg-purple-600 text-white py-2 rounded-lg font-semibold text-sm">Importa</button>
+                <button onclick="closeModal('import-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 py-2 rounded-lg font-semibold text-sm">Annulla</button>
             </div>
         </div>
     </div>
@@ -132,7 +188,6 @@
         let BUMP_THRESHOLD = 12;
         const COOLDOWN_MS = 3000;
         const CLUSTER_RADIUS = 8;
-        const BASE_WARNING_DISTANCE = 150;
 
         try {
             const stored = localStorage.getItem('roadBumps');
@@ -166,6 +221,16 @@
             document.getElementById('stats-text').textContent = `${detectedBumps.length} dissesti salvati`;
         }
 
+        function updateCurrentPosDisplay() {
+            const el = document.getElementById('current-pos');
+            if (currentPosition) {
+                el.textContent = `${currentPosition.lat.toFixed(3)}, ${currentPosition.lng.toFixed(3)}`;
+            } else {
+                el.textContent = "avvia prima il tracking per avere la posizione";
+            }
+        }
+
+        // UI STATES
         async function toggleMain() {
             if (!isNavigating && !isRecording) {
                 await startRecordingAndNav();
@@ -217,6 +282,7 @@
             hideAlert();
         }
 
+        // CORE FUNCTIONS
         async function startRecordingAndNav() {
             if (!navigator.geolocation) throw new Error('GPS non supportato');
             
@@ -240,6 +306,7 @@
                     currentPosition = newPos;
                     lastPosition = newPos;
                     updateUserPosition(newPos);
+                    updateCurrentPosDisplay();
                     
                     pathCoordinates.push([newPos.lat, newPos.lng]);
                     if (pathLine) pathLine.setLatLngs(pathCoordinates);
@@ -308,7 +375,7 @@
                 if (intensity > duplicate.intensity) {
                     duplicate.intensity = intensity;
                     duplicate.type = intensity > 30 ? 'buca_profonda' : (intensity > 20 ? 'dosso' : 'sussulto_medio');
-                    saveLocal();
+                    saveData();
                     renderBumpsList();
                 }
                 return;
@@ -329,18 +396,40 @@
             };
             
             detectedBumps.push(bump);
-            saveLocal();
+            saveData();
             addBumpMarker(bump);
             renderBumpsList();
             updateStats();
         }
 
-        function saveLocal() {
+        function saveData() {
             localStorage.setItem('roadBumps', JSON.stringify(detectedBumps));
         }
 
-        function exportData() {
-            if (detectedBumps.length === 0) return alert('Nessun dato');
+        // EXPORT/IMPORT CON FILTRO KM E NOME ZONA
+        function openExportModal() {
+            if (detectedBumps.length === 0) {
+                alert('Nessun dato da esportare');
+                return;
+            }
+            document.getElementById('export-modal').classList.add('active');
+            // Suggerisci zona basata sul centroide dei punti (semplificato: prima buca)
+            if (detectedBumps.length > 0 && !document.getElementById('export-zone').value) {
+                // Estrai città dalle coordinate? No, lasciamo all'utente
+            }
+        }
+
+        function openImportModal() {
+            document.getElementById('import-modal').classList.add('active');
+            updateCurrentPosDisplay();
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('active');
+        }
+
+        function confirmExport() {
+            const zone = document.getElementById('export-zone').value.trim();
             const privacyOn = document.getElementById('privacy-toggle').checked;
             let dataToExport = detectedBumps;
             
@@ -353,18 +442,29 @@
                 }));
             }
             
+            const dateStr = new Date().toISOString().split('T')[0];
+            const filename = zone ? `RoadBumps_${zone}_${dateStr}.json` : `RoadBumps_${dateStr}.json`;
+            
             const dataStr = JSON.stringify(dataToExport, null, 2);
             const blob = new Blob([dataStr], {type: 'application/json'});
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
-            link.download = `roadbumps_${new Date().toISOString().split('T')[0]}.json`;
+            link.download = filename;
             link.click();
+            
+            closeModal('export-modal');
         }
 
-        function importData(input) {
+        function confirmImport() {
+            const input = document.getElementById('import-input');
             const file = input.files[0];
-            if (!file) return;
+            if (!file) {
+                alert('Seleziona un file');
+                return;
+            }
+            
+            const radiusKm = parseInt(document.getElementById('import-radius').value);
             
             const reader = new FileReader();
             reader.onload = (e) => {
@@ -374,13 +474,24 @@
                     
                     let added = 0;
                     let merged = 0;
+                    let skippedDistance = 0;
                     
                     imported.forEach(imp => {
                         if (!imp || !imp.lat || !imp.lng || isNaN(imp.lat) || isNaN(imp.lng)) return;
+                        
+                        // FILTRO KM: se abbiamo posizione e il punto è troppo lontano, salta
+                        if (currentPosition && radiusKm) {
+                            const dist = calculateDistance(currentPosition.lat, currentPosition.lng, imp.lat, imp.lng);
+                            if (dist > radiusKm * 1000) {
+                                skippedDistance++;
+                                return;
+                            }
+                        }
+                        
+                        // Merge con esistenti (entro 8m)
                         const duplicate = detectedBumps.find(b => {
                             if (!b || !b.lat || !b.lng) return false;
-                            const dist = calculateDistance(b.lat, b.lng, imp.lat, imp.lng);
-                            return dist < 8;
+                            return calculateDistance(b.lat, b.lng, imp.lat, imp.lng) < 8;
                         });
                         
                         if (duplicate) {
@@ -403,19 +514,21 @@
                         }
                     });
                     
-                    saveLocal();
+                    saveData();
                     renderAllMarkers();
                     renderBumpsList();
                     updateStats();
-                    alert(`Importazione: ${added} nuovi, ${merged} aggiornati`);
+                    closeModal('import-modal');
+                    alert(`Importazione:\n${added} nuovi aggiunti\n${merged} aggiornati\n${skippedDistance} scartati (oltre ${radiusKm}km)`);
+                    input.value = '';
                 } catch (err) {
                     alert('Errore importazione: ' + err.message);
                 }
             };
             reader.readAsText(file);
-            input.value = '';
         }
 
+        // RESTO FUNZIONI (MAP, ALERT, etc)
         function renderAllMarkers() {
             map.eachLayer(layer => {
                 if (layer instanceof L.Marker && layer !== userMarker) map.removeLayer(layer);
@@ -436,7 +549,7 @@
             const marker = L.marker([bump.lat, bump.lng], { icon }).addTo(map);
             
             const typeLabel = bump.type === 'buca_profonda' ? 'Buca Profonda' : (bump.type === 'dosso' ? 'Dosso' : 'Sussulto');
-            const source = isImport ? ' (Importato)' : '';
+            const source = isImport ? ' (Import)' : '';
             const gForce = (intensity / 9.8).toFixed(1);
             
             marker.bindPopup(`
@@ -451,7 +564,7 @@
         function checkProximity() {
             if (!currentPosition || detectedBumps.length === 0 || !isNavigating) return;
             
-            let warningDist = BASE_WARNING_DISTANCE;
+            let warningDist = 150;
             if (currentSpeed > 0) {
                 warningDist = Math.max(80, Math.min(300, (currentSpeed / 3.6) * 20));
             }
