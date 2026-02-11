@@ -27,17 +27,35 @@
         .bump-alert { animation: shake 0.5s; }
         .sensor-bar { transition: width 0.1s ease; }
         
-        .modal {
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.5); z-index: 50;
-            display: none; align-items: center; justify-content: center; padding: 1rem;
-        }
-        .modal.active { display: flex; }
-        .modal-content {
-            background: white; border-radius: 1rem; padding: 1.5rem;
-            max-width: 400px; width: 100%; max-height: 80vh; overflow-y: auto;
-        }
-    </style>
+         .modal {
+        position: fixed; 
+        top: 0; 
+        left: 0; 
+        right: 0; 
+        bottom: 0;
+        background: rgba(0,0,0,0.6); /* Leggermente più scuro per contrasto */
+        z-index: 9999; /* MOLTO superiore alla mappa */
+        display: none; 
+        align-items: center; 
+        justify-content: center; 
+        padding: 1rem;
+        backdrop-filter: blur(4px); /* Effetto vetro smerigliato */
+    }
+    .modal.active { display: flex; }
+    .modal-content {
+        background: white; 
+        border-radius: 1rem; 
+        padding: 1.5rem;
+        max-width: 400px; 
+        width: 100%; 
+        max-height: 80vh; 
+        overflow-y: auto;
+        position: relative;
+        z-index: 10000; /* Massima priorità */
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        border: 1px solid rgba(0,0,0,0.1);
+    }
+</style>
 </head>
 <body class="bg-gray-100 h-screen flex flex-col overflow-hidden">
 
